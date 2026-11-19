@@ -1,0 +1,110 @@
+
+/*
+ * overflow_demo.c — integer overflow leading to a heap buffer overflow
+ *
+ * Educational demo: shows how a wrapped size calculation produces an
+ * undersized allocation, and how to fix it.
+ *
+ * Build & run (vulnerable path, with AddressSanitizer):
+ *   gcc -g -fsanitize=address -o demo overflow_demo.c
+ *   ./demo vuln
+ *
+ * Build & run (fixed path):
+ *   ./demo fixed
+ *
+ * Optional: Clang can also flag the unsigned wrap itself:
+ *   clang -g -fsanitize=address,unsigned-integer-overflow -o demo overflow_demo.c
+ */
+ 
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+ 
+typedef struct {
+    uint32_t id;
+    uint32_t value;
+    uint64_t timestamp;
+} record_t; /* 16 bytes */
+ 
+/*
+ * Pretend this header came from an untrusted file or network packet.
+ * The attacker controls `count`.
+ */
+typedef struct {
+    uint32_t count;
+} header_t;
+ 
+/* ---------------- VULNERABLE VERSION ---------------- */
+record_t *load_records_vuln(const header_t *hdr) {
+    /* BUG: 32-bit multiplication can wrap.
+     * 0x10000001 * 16 = 0x100000010, which truncates to 0x10 (16 bytes). */
+    uint32_t total = hdr->count * (uint32_t)sizeof(record_t);
+ 
+    printf("[vuln] count = %u (0x%x)\n", hdr->count, hdr->count);
+    printf("[vuln] computed allocation size = %u bytes\n", total);
+ 
+    record_t *buf = malloc(total); /* succeeds: room for ONE record */
+    if (!buf) return NULL;
+ 
+    /* The loop trusts the ORIGINAL count, not the allocation size. */
+    for (uint32_t i = 0; i < hdr->count; i++) {
+        buf[i].id = i;          /* i = 1 writes past the end of the heap buffer */
+        buf[i].value = 0x41414141;
+        buf[i].timestamp = 0;
+    }
+    return buf;
+}
+ 
+/* ---------------- FIXED VERSION ---------------- */
+#define MAX_RECORDS 100000u /* sane upper bound for this format */
+ 
+record_t *load_records_fixed(const header_t *hdr) {
+    /* Fix 1: validate the untrusted value against a realistic limit. */
+    if (hdr->count == 0 || hdr->count > MAX_RECORDS) {
+        fprintf(stderr, "[fixed] rejected: count %u out of range\n", hdr->count);
+        return NULL;
+    }
+ 
+    /* Fix 2: checked multiplication (GCC/Clang builtin; C23 has ckd_mul). */
+    size_t total;
+    if (__builtin_mul_overflow((size_t)hdr->count, sizeof(record_t), &total)) {
+        fprintf(stderr, "[fixed] rejected: size calculation overflowed\n");
+        return NULL;
+    }
+ 
+    /* Fix 3 (alternative): calloc checks count * size for overflow itself. */
+    record_t *buf = calloc(hdr->count, sizeof(record_t));
+    if (!buf) return NULL;
+ 
+    for (uint32_t i = 0; i < hdr->count; i++) {
+        buf[i].id = i;
+        buf[i].value = 0x41414141;
+        buf[i].timestamp = 0;
+    }
+    printf("[fixed] loaded %u records (%zu bytes)\n", hdr->count, total);
+    return buf;
+}
+ 
+int main(int argc, char **argv) {
+    if (argc < 2 || (strcmp(argv[1], "vuln") && strcmp(argv[1], "fixed"))) {
+        fprintf(stderr, "usage: %s vuln|fixed\n", argv[0]);
+        return 1;
+    }
+ 
+    /* "Malicious" header: chosen so count * 16 wraps to 16. */
+    header_t evil = { .count = 0x10000001u };
+    /* A normal header for comparison. */
+    header_t good = { .count = 4 };
+ 
+    record_t *r;
+    if (strcmp(argv[1], "vuln") == 0) {
+        r = load_records_vuln(&evil);
+    } else {
+        r = load_records_fixed(&good);
+        free(r);
+        r = load_records_fixed(&evil);
+    }
+    free(r);
+    return 0;
+}
