@@ -11,8 +11,8 @@ In my presentation, I chose to explore buffer overflows and memory vulnerabiliti
 ## Why is C particularly vulnerable?
 - No automatic bounds checking
 - Manual memory management
-- Fixed-size integers that wrap silently
-- C was designed for speed and control, so safety is left to the programmer
+- Fixed-size integers that wrap without warnings
+- C was designed for speed and control, safety is left to the programmer
 
 ## Real World Application: Stagefright (Android, 2015)
 - Stagefright was Android’s native media library written in C++. 
@@ -36,3 +36,6 @@ In my presentation, I chose to explore buffer overflows and memory vulnerabiliti
 3. Use tooling
 - Turn on compiler warnings: -Wall -Wextra
 - Run with sanitizers while testing: -fsanitize=undefined, fsanitize=integer,  -fsanitize=address
+
+## Full Presentation Slides
+https://canva.link/c44s1ky24ejwc2g 
